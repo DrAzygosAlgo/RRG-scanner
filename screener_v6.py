@@ -1,13 +1,12 @@
 """
-RRG SCREENER v6 - Render.com Edition
-====================================
-Data:     Live from NSE India via 'nsepython'
+RRG SCREENER v6.1 - Resilient Render Edition
+============================================
+Data:     Live from NSE India via 'pnsea' (Impersonates Chrome Browser)
 Strategy: Daily history cache + Live snapshot appending
-Alerts:   Telegram + ntfy.sh + WhatsApp
+Alerts:   Telegram + ntfy.sh
 Engine:   Flask Web Server + Background Threading
 """
 import sys, os, json, time, logging, warnings, threading
-from io import StringIO
 import numpy as np
 import pandas as pd
 import requests
@@ -17,11 +16,9 @@ from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 from flask import Flask
 
-# Use nsepythonserver to bypass cloud datacenter blocks
-try:
-    from nsepython import equity_history, index_history, nsefetch
-except ImportError:
-    from nsepythonserver import equity_history, index_history, nsefetch
+# Use pnsea stealth engine to bypass Cloudflare datacenter blocks
+from pnsea import NSE
+nse_client = NSE()
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
 warnings.filterwarnings('ignore')
@@ -29,8 +26,6 @@ warnings.filterwarnings('ignore')
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN        = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT         = os.getenv("TELEGRAM_CHAT",  "")
-WHATSAPP_PHONE        = os.getenv("WHATSAPP_PHONE", "")
-WHATSAPP_APIKEY       = os.getenv("WHATSAPP_APIKEY", "")
 NTFY_TOPIC            = os.getenv("NTFY_TOPIC",     "rrg-alerts-drazygos")
 
 SCAN_INTERVAL_MARKET  = int(os.getenv("SCAN_INTERVAL_MARKET",   "30"))
@@ -91,7 +86,7 @@ def get_universe():
                 return data.get("constituents", {})
         except: pass
     
-    log.info("Using Fallback Universe (File not found or stale)")
+    log.info("Using Fallback Universe")
     with open(UNIVERSE_FILE, "w") as f:
         json.dump({"updated": datetime.now(IST).isoformat(), "constituents": FALLBACK_CONSTITUENTS}, f, indent=2)
     return FALLBACK_CONSTITUENTS
@@ -109,16 +104,13 @@ def get_history(symbol, is_index=False):
         _last_cache_date = current_date
 
     if symbol in _history_cache: return _history_cache[symbol]
-
-    end_date = datetime.now(IST).strftime("%d-%m-%Y")
-    start_date = (datetime.now(IST) - timedelta(days=360)).strftime("%d-%m-%Y")
     
     try:
         if is_index:
-            df = index_history(symbol, start_date, end_date)
+            df = nse_client.get_index_history(symbol, days=360)
             date_col, close_col = 'HistoricalDate', 'CLOSE'
         else:
-            df = equity_history(symbol, "EQ", start_date, end_date)
+            df = nse_client.get_equity_history(symbol, days=360)
             date_col, close_col = ('CH_TIMESTAMP', 'CH_CLOSING_PRICE') if 'CH_TIMESTAMP' in df.columns else ('Date', 'Close')
             
         if df is not None and not df.empty:
@@ -126,19 +118,24 @@ def get_history(symbol, is_index=False):
             df = df.sort_values(date_col).set_index(date_col)
             series = df[close_col].astype(float)
             _history_cache[symbol] = series
-            time.sleep(0.3) 
+            time.sleep(0.5) 
             return series
-    except Exception as e: log.debug(f"History fetch failed for {symbol}: {e}")
+    except Exception as e: log.error(f"History fetch error for {symbol}: {e}")
     return None
 
 def get_live_market_snapshot():
     live_prices = {}
     try:
-        index_payload = nsefetch("https://www.nseindia.com/api/allIndices")
-        for item in index_payload.get("data", []): live_prices[item["indexSymbol"]] = item["last"]
-        stock_payload = nsefetch("https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20500")
-        for item in stock_payload.get("data", []): live_prices[item["symbol"]] = item["lastPrice"]
-    except Exception as e: log.error(f"Live fetch failed: {e}")
+        # Use stealth client calls
+        index_data = nse_client.get_all_indices()
+        for item in index_data.get("data", []): 
+            live_prices[item["indexSymbol"]] = item["last"]
+            
+        stock_data = nse_client.get_custom_market_data("NIFTY 500")
+        for item in stock_data.get("data", []): 
+            live_prices[item["symbol"]] = item["lastPrice"]
+    except Exception as e: 
+        log.error(f"Live snapshot extraction failed: {e}")
     return live_prices
 
 # ── RRG CALCULATOR ────────────────────────────────────────────────────────────
@@ -209,14 +206,6 @@ def load_state():
 def save_state(state):
     with open(STATE_FILE, "w") as f: json.dump(state, f, indent=2)
 
-def send_whatsapp(msg):
-    if not WHATSAPP_PHONE or not WHATSAPP_APIKEY: return
-    try:
-        r = requests.get("https://api.callmebot.com/whatsapp.php", 
-                         params={"phone": WHATSAPP_PHONE, "text": msg, "apikey": WHATSAPP_APIKEY}, timeout=10)
-        log.info(f"WhatsApp: {'OK' if r.status_code==200 else 'FAIL '+str(r.status_code)}")
-    except Exception as e: log.warning(f"WhatsApp Error: {e}")
-
 def fire_alert(kind, name, benchmark, interval, old_q, new_q, data):
     msg = (f"*QUADRANT CHANGE*\n\n"
            f"{'Sector' if kind=='sector' else 'Stock'}: *{name}*\n"
@@ -227,7 +216,6 @@ def fire_alert(kind, name, benchmark, interval, old_q, new_q, data):
            f"{datetime.now(IST).strftime('%d-%b-%Y %H:%M IST')}")
 
     log.info(f"  ALERT: [{kind}] {name} | {interval} | {old_q} -> {new_q}")
-    send_whatsapp(msg)
     
     if TELEGRAM_TOKEN:
         try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT, "text": msg, "parse_mode": "Markdown"}, timeout=10)
@@ -240,10 +228,16 @@ def is_market_hours(): return MARKET_OPEN <= datetime.now(IST).time() <= MARKET_
 
 def run_scan():
     log.info("-" * 55)
-    log.info(f"SCAN: {datetime.now(IST).strftime('%d-%b-%Y %H:%M IST')}")
+    log.info(f"STARTING CORE SCAN: {datetime.now(IST).strftime('%d-%b-%Y %H:%M IST')}")
     universe, state, changes = get_universe(), load_state(), 0
+    
     live_prices = get_live_market_snapshot()
-    if not live_prices: return
+    if not live_prices: 
+        log.warning("Snapshot extraction returned empty. Retrying client handshake...")
+        return
+
+    log.info(f"Market Snapshot loaded successfully with {len(live_prices)} entries.")
+    cnx50_bench = NSE_INDICES["CNX50"]
 
     for sector in SECTORS:
         bench_nse = NSE_INDICES.get(sector)
@@ -273,17 +267,19 @@ def run_scan():
                 state[key] = data
 
     save_state(state)
-    log.info(f"DONE - {changes} alert(s) triggered")
+    log.info(f"CORE SCAN COMPLETE - {changes} alert(s) triggered")
 
 # ── BACKGROUND THREAD ─────────────────────────────────────────────────────────
 def scanner_loop():
-    log.info("Background RRG Scanner Started...")
-    run_scan()
+    log.info("Background RRG Scanner Thread Synchronized.")
     while True:
+        try:
+            run_scan()
+        except Exception as e:
+            log.error(f"Error encountered inside execution loop: {e}")
         interval = SCAN_INTERVAL_MARKET if is_market_hours() else SCAN_INTERVAL_OFF
-        log.info(f"Next scan in {interval}m...")
+        log.info(f"Next scan scheduled in {interval}m...")
         time.sleep(interval * 60)
-        run_scan()
 
 # ── FLASK WEB SERVER ──────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -294,13 +290,11 @@ def keep_alive():
 
 if __name__ == "__main__":
     log.info("=" * 55)
-    log.info("RRG SCREENER v6 - Web Service Edition")
+    log.info("RRG SCREENER v6.1 - Web Service Edition")
     log.info("=" * 55)
     
-    # 1. Start the infinite scanning loop in a background thread
     t = threading.Thread(target=scanner_loop, daemon=True)
     t.start()
     
-    # 2. Start the Flask web server on the main thread (Required by Render)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
