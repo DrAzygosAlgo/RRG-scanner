@@ -1,7 +1,7 @@
 """
-RRG SCREENER v6.1 - Resilient Render Edition
+RRG SCREENER v6.2 - Ultimate Stealth Edition
 ============================================
-Data:     Live from NSE India via 'pnsea' (Impersonates Chrome Browser)
+Data:     nsepythonserver logic + pnsea stealth routing
 Strategy: Daily history cache + Live snapshot appending
 Alerts:   Telegram + ntfy.sh
 Engine:   Flask Web Server + Background Threading
@@ -16,10 +16,23 @@ from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 from flask import Flask
 
-# Use pnsea stealth engine to bypass Cloudflare datacenter blocks
+# ── STEALTH ENGINE PATCH ──────────────────────────────────────────────────────
+# We intercept nsepythonserver's raw network fetcher and force it to use pnsea
 from pnsea import NSE
+import nsepythonserver
+
 nse_client = NSE()
 
+def stealth_nsefetch(url):
+    """Routes URLs through curl_cffi to mimic a real Chrome browser."""
+    res = nse_client.endpoint_tester(url)
+    return res.json()
+
+# Monkey-patch applied here!
+nsepythonserver.nsefetch = stealth_nsefetch
+from nsepythonserver import equity_history, index_history
+
+# ──────────────────────────────────────────────────────────────────────────────
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
 warnings.filterwarnings('ignore')
 
@@ -104,13 +117,17 @@ def get_history(symbol, is_index=False):
         _last_cache_date = current_date
 
     if symbol in _history_cache: return _history_cache[symbol]
+
+    end_date = datetime.now(IST).strftime("%d-%m-%Y")
+    start_date = (datetime.now(IST) - timedelta(days=360)).strftime("%d-%m-%Y")
     
     try:
+        # These now secretly use the stealth fetcher internally!
         if is_index:
-            df = nse_client.get_index_history(symbol, days=360)
+            df = index_history(symbol, start_date, end_date)
             date_col, close_col = 'HistoricalDate', 'CLOSE'
         else:
-            df = nse_client.get_equity_history(symbol, days=360)
+            df = equity_history(symbol, "EQ", start_date, end_date)
             date_col, close_col = ('CH_TIMESTAMP', 'CH_CLOSING_PRICE') if 'CH_TIMESTAMP' in df.columns else ('Date', 'Close')
             
         if df is not None and not df.empty:
@@ -126,12 +143,12 @@ def get_history(symbol, is_index=False):
 def get_live_market_snapshot():
     live_prices = {}
     try:
-        # Use stealth client calls
-        index_data = nse_client.get_all_indices()
+        # Use our patched stealth fetcher directly
+        index_data = stealth_nsefetch("https://www.nseindia.com/api/allIndices")
         for item in index_data.get("data", []): 
             live_prices[item["indexSymbol"]] = item["last"]
             
-        stock_data = nse_client.get_custom_market_data("NIFTY 500")
+        stock_data = stealth_nsefetch("https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20500")
         for item in stock_data.get("data", []): 
             live_prices[item["symbol"]] = item["lastPrice"]
     except Exception as e: 
@@ -233,7 +250,7 @@ def run_scan():
     
     live_prices = get_live_market_snapshot()
     if not live_prices: 
-        log.warning("Snapshot extraction returned empty. Retrying client handshake...")
+        log.warning("Snapshot extraction returned empty. Skipping this interval.")
         return
 
     log.info(f"Market Snapshot loaded successfully with {len(live_prices)} entries.")
@@ -277,6 +294,7 @@ def scanner_loop():
             run_scan()
         except Exception as e:
             log.error(f"Error encountered inside execution loop: {e}")
+        
         interval = SCAN_INTERVAL_MARKET if is_market_hours() else SCAN_INTERVAL_OFF
         log.info(f"Next scan scheduled in {interval}m...")
         time.sleep(interval * 60)
@@ -290,7 +308,7 @@ def keep_alive():
 
 if __name__ == "__main__":
     log.info("=" * 55)
-    log.info("RRG SCREENER v6.1 - Web Service Edition")
+    log.info("RRG SCREENER v6.2 - Ultimate Stealth Edition")
     log.info("=" * 55)
     
     t = threading.Thread(target=scanner_loop, daemon=True)
