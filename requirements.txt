@@ -4,4 +4,5 @@ pandas
 requests
 python-dotenv
 tzdata
-nsepythonserver
+pnsea
+curl_cffi
