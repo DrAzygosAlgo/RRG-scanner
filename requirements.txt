@@ -6,3 +6,4 @@ python-dotenv
 tzdata
 pnsea
 curl_cffi
+nsepythonserver
