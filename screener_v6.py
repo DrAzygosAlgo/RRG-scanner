@@ -4,13 +4,16 @@ RRG SCREENER v7 - EOD Bhavcopy Edition
 Data:     Official NSE Bhavcopy via 'nselib'
 Strategy: Once-daily EOD update
 """
-import time, logging, threading, os, json
-from datetime import datetime, time as dtime
+import sys, os, json, time, logging, warnings, threading
+from io import StringIO
+import numpy as np
+import pandas as pd
+import requests
+# Ensure BOTH datetime and timedelta are imported
+from datetime import datetime, time as dtime, timedelta 
 from zoneinfo import ZoneInfo
 from flask import Flask
 from nselib import capital_market
-import pandas as pd
-import numpy as np
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 IST = ZoneInfo("Asia/Kolkata")
