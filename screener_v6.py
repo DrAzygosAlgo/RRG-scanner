@@ -33,20 +33,28 @@ def get_latest_trading_date():
     return None
 
 def get_eod_data():
-    """Downloads the most recent available Bhavcopy."""
-    trade_date = get_latest_trading_date()
-    if not trade_date:
-        log.error("No valid trading date found.")
-        return None
+    """Directly downloads the Bhavcopy CSV from NSE."""
+    # Try the last 3 days
+    for i in range(3):
+        dt = datetime.now(IST) - timedelta(days=i)
+        day = dt.strftime("%d")
+        month = dt.strftime("%b").upper()
+        year = dt.strftime("%Y")
         
-    try:
-        log.info(f"Attempting to download Bhavcopy for last trading date: {trade_date}")
-        df = capital_market.bhav_copy_equities(trade_date)
-        if df is not None and not df.empty:
-            log.info(f"Successfully loaded Bhavcopy for {trade_date}")
-            return df[['SYMBOL', 'CLOSE']]
-    except Exception as e:
-        log.error(f"Error fetching Bhavcopy: {e}")
+        # NSE Bhavcopy URL structure: https://archives.nseindia.com/content/historical/EQUITIES/2026/MAY/cm22MAY2026bhav.csv.zip
+        url = f"https://archives.nseindia.com/content/historical/EQUITIES/{year}/{month}/cm{day}{month}{year}bhav.csv.zip"
+        
+        log.info(f"Trying URL: {url}")
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            if r.status_code == 200:
+                # Use pandas to read the zip directly from memory
+                df = pd.read_csv(r.content, compression='zip')
+                log.info(f"Successfully downloaded and loaded Bhavcopy for {day}-{month}-{year}")
+                return df[['SYMBOL', 'CLOSE']]
+        except Exception as e:
+            log.warning(f"Could not download {url}: {e}")
+            continue
     return None
 # ── RRG ENGINE ────────────────────────────────────────────────────────────────
 # You can keep your compute_rrg, get_quadrant, and get_angle functions here.
