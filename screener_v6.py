@@ -20,18 +20,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 # ── EOD DATA ENGINE ───────────────────────────────────────────────────────────
-def get_eod_data():
-    """Downloads the latest Bhavcopy and processes it."""
-    try:
-        today_str = datetime.now(IST).strftime("%d-%m-%Y")
-        log.info(f"Downloading Bhavcopy for {today_str}...")
-        df = capital_market.bhav_copy_equities(today_str)
-        # Process the dataframe (keep Symbol and Close Price)
-        df = df[['SYMBOL', 'CLOSE']]
-        return df
-    except Exception as e:
-        log.error(f"Failed to download Bhavcopy: {e}")
-        return None
+ddef get_eod_data():
+    """Tries to download the bhavcopy for today; if it fails, steps back 1 day."""
+    for i in range(5):  # Try today, then yesterday, then the day before...
+        date_to_try = (datetime.now(IST) - timedelta(days=i)).strftime("%d-%m-%Y")
+        try:
+            log.info(f"Attempting to download Bhavcopy for {date_to_try}...")
+            df = capital_market.bhav_copy_equities(date_to_try)
+            if df is not None and not df.empty:
+                log.info(f"Successfully downloaded data for {date_to_try}")
+                return df[['SYMBOL', 'CLOSE']]
+        except:
+            continue
+    log.error("Could not find any recent Bhavcopy data.")
+    return None
 
 # ── RRG ENGINE ────────────────────────────────────────────────────────────────
 # You can keep your compute_rrg, get_quadrant, and get_angle functions here.
