@@ -2,5 +2,6 @@ flask
 numpy
 pandas
 requests
-nselib
 python-dotenv
+tzdata
+gunicorn
