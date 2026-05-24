@@ -8,33 +8,20 @@ from dotenv import load_dotenv
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT  = os.getenv("TELEGRAM_CHAT", "")
-IST            = ZoneInfo("Asia/Kolkata")
-SCAN_TIME      = dtime(18, 0, 0) # Scan at 6 PM daily
-SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
+IST = ZoneInfo("Asia/Kolkata")
+SCAN_TIME = dtime(18, 0, 0)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger(__name__)
 
-# ── TELEGRAM HEARTBEAT ────────────────────────────────────────────────────────
-def send_telegram(msg):
-    if TELEGRAM_TOKEN and TELEGRAM_CHAT:
-        try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                          json={"chat_id": TELEGRAM_CHAT, "text": msg, "parse_mode": "Markdown"}, timeout=10)
-        except Exception as e:
-            log.error(f"Telegram failed: {e}")
-
 # ── EOD DATA ENGINE ───────────────────────────────────────────────────────────
 def get_eod_data():
-    """Downloads the latest Bhavcopy from NSE Archives."""
     for i in range(5):
         dt = datetime.now(IST) - timedelta(days=i)
         day, month, year = dt.strftime("%d"), dt.strftime("%b").upper(), dt.strftime("%Y")
         url = f"https://archives.nseindia.com/content/historical/EQUITIES/{year}/{month}/cm{day}{month}{year}bhav.csv.zip"
         
-        log.info(f"Attempting: {url}")
         try:
             r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
             if r.status_code == 200:
@@ -42,7 +29,7 @@ def get_eod_data():
                 log.info(f"Success: Loaded data for {day}-{month}-{year}")
                 return df[['SYMBOL', 'CLOSE']]
         except Exception as e:
-            log.warning(f"Fetch failed: {e}")
+            log.warning(f"Fetch failed for {day}: {e}")
     return None
 
 def run_eod_scan():
@@ -52,27 +39,21 @@ def run_eod_scan():
         log.info("No trading data found. Skipping.")
         return
     log.info(f"Processing {len(data)} symbols. Database updated.")
-    # Add your RRG logic here when ready
 
 def scanner_loop():
-    log.info("Background EOD Scanner Thread Synchronized.")
-    # Send Heartbeat to verify Telegram is working
-    send_telegram("✅ RRG Bot is online and ready!")
-    
     while True:
-        now = datetime.now(IST)
-        if now.time() >= SCAN_TIME:
+        if datetime.now(IST).time() >= SCAN_TIME:
             run_eod_scan()
-            time.sleep(20 * 3600) # Sleep 20h
+            time.sleep(20 * 3600)
         else:
-            time.sleep(1800) # Check every 30m
+            time.sleep(1800)
 
-# ── FLASK WEB SERVER ──────────────────────────────────────────────────────────
 app = Flask(__name__)
 @app.route('/')
 def keep_alive():
     return "RRG EOD Screener is Online."
 
 if __name__ == "__main__":
-    log.info("Starting RRG Screener v6.3...")
     threading.Thread(target=scanner_loop, daemon=True).start()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
