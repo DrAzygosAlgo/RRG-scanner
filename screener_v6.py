@@ -23,21 +23,31 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 # ── EOD DATA ENGINE ───────────────────────────────────────────────────────────
-def get_eod_data():
-    """Tries to download the bhavcopy for today; if it fails, steps back 1 day."""
-    for i in range(5):  # Try today, then yesterday, then the day before...
-        date_to_try = (datetime.now(IST) - timedelta(days=i)).strftime("%d-%m-%Y")
-        try:
-            log.info(f"Attempting to download Bhavcopy for {date_to_try}...")
-            df = capital_market.bhav_copy_equities(date_to_try)
-            if df is not None and not df.empty:
-                log.info(f"Successfully downloaded data for {date_to_try}")
-                return df[['SYMBOL', 'CLOSE']]
-        except:
-            continue
-    log.error("Could not find any recent Bhavcopy data.")
+def get_latest_trading_date():
+    """Finds the last valid trading date."""
+    for i in range(7):  # Check up to 7 days back
+        date_to_try = datetime.now(IST) - timedelta(days=i)
+        # 0=Monday, 5=Saturday, 6=Sunday. Market usually open 0-4 (Mon-Fri)
+        if date_to_try.weekday() < 5: 
+            return date_to_try.strftime("%d-%m-%Y")
     return None
 
+def get_eod_data():
+    """Downloads the most recent available Bhavcopy."""
+    trade_date = get_latest_trading_date()
+    if not trade_date:
+        log.error("No valid trading date found.")
+        return None
+        
+    try:
+        log.info(f"Attempting to download Bhavcopy for last trading date: {trade_date}")
+        df = capital_market.bhav_copy_equities(trade_date)
+        if df is not None and not df.empty:
+            log.info(f"Successfully loaded Bhavcopy for {trade_date}")
+            return df[['SYMBOL', 'CLOSE']]
+    except Exception as e:
+        log.error(f"Error fetching Bhavcopy: {e}")
+    return None
 # ── RRG ENGINE ────────────────────────────────────────────────────────────────
 # You can keep your compute_rrg, get_quadrant, and get_angle functions here.
 # The only difference is that you pass the DataFrame loaded from the CSV.
