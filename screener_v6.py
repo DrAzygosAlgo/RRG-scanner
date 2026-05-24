@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 # ── EOD DATA ENGINE ───────────────────────────────────────────────────────────
-ddef get_eod_data():
+def get_eod_data():
     """Tries to download the bhavcopy for today; if it fails, steps back 1 day."""
     for i in range(5):  # Try today, then yesterday, then the day before...
         date_to_try = (datetime.now(IST) - timedelta(days=i)).strftime("%d-%m-%Y")
